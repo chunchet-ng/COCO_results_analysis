@@ -1,0 +1,7 @@
+numpy
+loguru
+pycocotools
+tabulate
+tqdm
+matplotlib
+seaborn
