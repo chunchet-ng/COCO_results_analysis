@@ -17,7 +17,7 @@ from tqdm import tqdm
 from confusion_matrix import ConfusionMatrix
 
 
-def per_class_AR_table(coco_eval, class_names=[], headers=["class", "AR"], colums=6):
+def per_class_AR_table(coco_eval, class_names=[], headers=["Class", "AR"], columns=6):
     per_class_AR = {}
     recalls = coco_eval.eval["recall"]
     # dimension of recalls: [TxKxAxM]
@@ -30,7 +30,7 @@ def per_class_AR_table(coco_eval, class_names=[], headers=["class", "AR"], colum
         ar = np.mean(recall) if recall.size else float("nan")
         per_class_AR[name] = float(ar * 100)
 
-    num_cols = min(colums, len(per_class_AR) * len(headers))
+    num_cols = min(columns, len(per_class_AR) * len(headers))
     result_pair = [x for pair in per_class_AR.items() for x in pair]
     row_pair = itertools.zip_longest(*[result_pair[i::num_cols] for i in range(num_cols)])
     table_headers = headers * (num_cols // len(headers))
@@ -40,7 +40,7 @@ def per_class_AR_table(coco_eval, class_names=[], headers=["class", "AR"], colum
     return table
 
 
-def per_class_AP_table(coco_eval, class_names=[], headers=["class", "AP"], colums=6):
+def per_class_AP_table(coco_eval, class_names=[], headers=["Class", "AP"], columns=6):
     per_class_AP = {}
     precisions = coco_eval.eval["precision"]
     # dimension of precisions: [TxRxKxAxM]
@@ -55,12 +55,66 @@ def per_class_AP_table(coco_eval, class_names=[], headers=["class", "AP"], colum
         ap = np.mean(precision) if precision.size else float("nan")
         per_class_AP[name] = float(ap * 100)
 
-    num_cols = min(colums, len(per_class_AP) * len(headers))
+    num_cols = min(columns, len(per_class_AP) * len(headers))
     result_pair = [x for pair in per_class_AP.items() for x in pair]
     row_pair = itertools.zip_longest(*[result_pair[i::num_cols] for i in range(num_cols)])
     table_headers = headers * (num_cols // len(headers))
     table = tabulate(
         row_pair, tablefmt="pipe", floatfmt=".3f", headers=table_headers, numalign="left",
+    )
+    return table
+
+
+def per_object_size_class_AP_table(coco_eval, class_names=[], headers=[], columns=5):
+    per_class_AP = []
+    precisions = coco_eval.eval["precision"]
+    # dimension of precisions: [TxRxKxAxM]
+    # precision has dims (iou, recall, cls, area range, max dets)
+    assert len(class_names) == precisions.shape[2]
+
+    for idx, name in enumerate(class_names):
+        row_data = []
+        # area range index 0: all area ranges
+        # max dets index -1: typically 100 per image
+        row_data.append(name)
+        for size in range(4):
+            precision = precisions[:, :, idx, size, -1]
+            precision = precision[precision > -1]
+            ap = np.mean(precision) if precision.size else float("nan")
+            row_data.append(float(ap * 100))
+        per_class_AP.append(row_data)
+
+    num_cols = min(columns, len(per_class_AP) * len(headers))
+    table_headers = headers * (num_cols // len(headers))
+    table = tabulate(
+        per_class_AP, tablefmt="pipe", floatfmt=".3f", headers=table_headers, numalign="left",
+    )
+    return table
+
+
+def per_iou_class_AP_table(coco_eval, class_names=[], headers=[], columns=11):
+    per_class_AP = []
+    precisions = coco_eval.eval["precision"]
+    # dimension of precisions: [TxRxKxAxM]
+    # precision has dims (iou, recall, cls, area range, max dets)
+    assert len(class_names) == precisions.shape[2]
+
+    for idx, name in enumerate(class_names):
+        row_data = []
+        # area range index 0: all area ranges
+        # max dets index -1: typically 100 per image
+        row_data.append(name)
+        for iou in range(10):
+            precision = precisions[iou, :, idx, 0, -1]
+            precision = precision[precision > -1]
+            ap = np.mean(precision) if precision.size else float("nan")
+            row_data.append(float(ap * 100))
+        per_class_AP.append(row_data)
+
+    num_cols = min(columns, len(per_class_AP) * len(headers))
+    table_headers = headers * (num_cols // len(headers))
+    table = tabulate(
+        per_class_AP, tablefmt="pipe", floatfmt=".3f", headers=table_headers, numalign="left",
     )
     return table
 
@@ -83,9 +137,18 @@ def run_coco(gt_path, pred_path):
         cocoEval.summarize()
     info += redirect_string.getvalue()
     AP_table = per_class_AP_table(cocoEval, class_names=cat_names)
-    info += "\nper class AP:\n" + AP_table + "\n"
+    info += "\nper class AP @ IoU=0.50:0.95:\n" + AP_table + "\n"
+
     AR_table = per_class_AR_table(cocoEval, class_names=cat_names)
-    info += "\nper class AR:\n" + AR_table + "\n"
+    info += "\nper class AR @ IoU=0.50:0.95:\n" + AR_table + "\n"
+
+    headers=["Class", "All", "Small", "Medium", "Large"]
+    size_AP_table = per_object_size_class_AP_table(cocoEval, headers=headers, class_names=cat_names)
+    info += "\nper object size per class AP @ IoU=0.50:0.95:\n" + size_AP_table + "\n"
+
+    headers=["Class", "0.50", "0.55", "0.60", "0.65", "0.70", "0.75", "0.80", "0.85", "0.90", "0.95"]
+    iou_AP_table = per_iou_class_AP_table(cocoEval, headers=headers, class_names=cat_names)
+    info += "\nper class AP across IoU=0.50:0.95:\n" + iou_AP_table + "\n"
     return info
 
 
@@ -163,10 +226,10 @@ def plot_conf_matrix(gt_path, pred_path, cm_save_dir, conf, iou):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='COCO Results Analysis Toolkit.')
-    parser.add_argument('--gt_path', type=str, required=True, help='Path to groundtruth JSON file.')
-    parser.add_argument('--pred_path', type=str, required=True, help='Path to prediction JSON file.')
-    parser.add_argument('--save_dir', type=str, required=True, help='Path to output folder.')
+    parser = argparse.ArgumentParser(description="COCO Results Analysis Toolkit.")
+    parser.add_argument("--gt_path", type=str, required=True, help="Path to groundtruth JSON file.")
+    parser.add_argument("--pred_path", type=str, required=True, help="Path to prediction JSON file.")
+    parser.add_argument("--save_dir", type=str, required=True, help="Path to output folder.")
 
     args = parser.parse_args()
     gt_path = args.gt_path
